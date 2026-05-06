@@ -115,15 +115,24 @@ exports.getStudents = async (req, res) => {
     const params = org_id ? [org_id] : [];
     const [rows] = await pool.execute(
       `SELECT s.student_id, u.first_name, u.last_name, u.email, u.status,
-              s.grade_level, s.balance, s.org_id, o.name AS org_name, s.enrollment_date, s.external_student_id
+              s.grade_level, s.balance, s.org_id, o.name AS org_name, s.enrollment_date, s.external_student_id,
+              ir.pdf_s3_key, ir.voice_s3_key
        FROM students s
        JOIN users u ON s.user_id = u.user_id
        LEFT JOIN organizations o ON s.org_id = o.org_id
+       LEFT JOIN intake_records ir ON ir.student_id = s.student_id
        ${where}
        ORDER BY u.last_name ASC`,
       params
     );
-    res.json(rows);
+    const result = rows.map(r => ({
+      ...r,
+      intake_pdf_url: r.pdf_s3_key ? getPresignedUrl(r.pdf_s3_key, 900) : null,
+      intake_voice_url: r.voice_s3_key ? getPresignedUrl(r.voice_s3_key, 900) : null,
+      pdf_s3_key: undefined,
+      voice_s3_key: undefined,
+    }));
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching students', error: error.message });
   }
@@ -244,7 +253,7 @@ exports.createDeposit = async (req, res) => {
 exports.getParentDeposits = async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT d.deposit_id, d.student_id, d.amount, d.currency, d.note, d.status, d.created_at,
+      `SELECT d.deposit_id, d.student_id, d.amount, d.currency, d.note, d.proof_url, d.status, d.created_at,
               u.first_name, u.last_name
        FROM parents p
        JOIN students s ON s.parent_id = p.parent_id
@@ -254,7 +263,11 @@ exports.getParentDeposits = async (req, res) => {
        ORDER BY d.created_at DESC`,
       [req.user.userId]
     );
-    res.json(rows);
+    const result = rows.map(d => ({
+      ...d,
+      proof_url: d.proof_url ? getPresignedUrl(d.proof_url, 900) : null,
+    }));
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching deposits', error: error.message });
   }
