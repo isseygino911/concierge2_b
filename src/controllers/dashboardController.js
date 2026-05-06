@@ -109,7 +109,7 @@ exports.getStudents = async (req, res) => {
     const params = org_id ? [org_id] : [];
     const [rows] = await pool.execute(
       `SELECT s.student_id, u.first_name, u.last_name, u.email, u.status,
-              s.grade_level, s.balance, s.org_id, o.name AS org_name, s.enrollment_date
+              s.grade_level, s.balance, s.org_id, o.name AS org_name, s.enrollment_date, s.external_student_id
        FROM students s
        JOIN users u ON s.user_id = u.user_id
        LEFT JOIN organizations o ON s.org_id = o.org_id
