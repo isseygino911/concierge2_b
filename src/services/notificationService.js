@@ -94,7 +94,7 @@ const notificationService = {
 
       case 'DEPOSIT_UPLOADED': {
         const title = 'New Deposit Submitted';
-        const message = `Deposit uploaded by ${data.studentName || 'Unknown'} — amount: ¥${data.amount}`;
+        const message = `Deposit uploaded by ${data.studentName || 'Unknown'} — amount: ${data.amount} ${data.currency || 'CAD'}`;
         await this.notifyRole('sales', title, message, 'deposit');
         break;
       }

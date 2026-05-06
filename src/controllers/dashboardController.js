@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { uploadToS3 } = require('../utils/s3Utils');
+const { uploadToS3, getPresignedUrl } = require('../utils/s3Utils');
 const notificationService = require('../services/notificationService');
 
 // --- Sales Dashboard Logic ---
@@ -7,16 +7,22 @@ const notificationService = require('../services/notificationService');
 exports.getPendingDeposits = async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT d.*, u.first_name, u.last_name, s.grade_level 
-       FROM deposits d 
-       JOIN students s ON d.student_id = s.student_id 
-       JOIN users u ON s.user_id = u.user_id 
-       WHERE d.status = 'pending' 
+      `SELECT d.deposit_id, d.student_id, d.amount, d.currency, d.note, d.proof_url,
+              d.status, d.reject_reason, d.created_at,
+              u.first_name, u.last_name, s.grade_level, o.name AS org_name
+       FROM deposits d
+       JOIN students s ON d.student_id = s.student_id
+       JOIN users u ON s.user_id = u.user_id
+       LEFT JOIN organizations o ON s.org_id = o.org_id
        ORDER BY d.created_at DESC`
     );
-    res.json(rows);
+    const result = rows.map(d => ({
+      ...d,
+      proof_url: d.proof_url ? getPresignedUrl(d.proof_url, 900) : null,
+    }));
+    res.json(result);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching pending deposits', error: error.message });
+    res.status(500).json({ message: 'Error fetching deposits', error: error.message });
   }
 };
 
@@ -209,32 +215,48 @@ exports.getChildrenStats = async (req, res) => {
 
 exports.createDeposit = async (req, res) => {
   try {
-    const { student_id, amount } = req.body;
+    const { student_id, amount, currency, note } = req.body;
     const file = req.file;
 
-    if (!file) {
-      return res.status(400).json({ message: 'Deposit proof file is required' });
-    }
+    if (!file) return res.status(400).json({ message: 'Deposit proof file is required' });
+    if (!student_id || !amount) return res.status(400).json({ message: 'student_id and amount are required' });
 
-    const proofUrl = await uploadToS3(file);
+    const proofS3Key = await uploadToS3(file);
 
     await pool.execute(
-      'INSERT INTO deposits (student_id, amount, proof_url, status) VALUES (?, ?, ?, ?)',
-      [student_id, amount, proofUrl, 'pending']
+      'INSERT INTO deposits (student_id, amount, currency, note, proof_url, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [student_id, amount, currency || 'CAD', note || null, proofS3Key, 'pending']
     );
 
-    // Get student name for the notification
     const [studentRows] = await pool.execute(
       'SELECT u.first_name, u.last_name FROM students s JOIN users u ON s.user_id = u.user_id WHERE s.student_id = ?',
       [student_id]
     );
     const studentName = studentRows.length > 0 ? `${studentRows[0].first_name} ${studentRows[0].last_name}` : 'Unknown';
+    await notificationService.notifyEvent('DEPOSIT_UPLOADED', { studentName, amount, currency: currency || 'CAD' });
 
-    await notificationService.notifyEvent('DEPOSIT_UPLOADED', { studentName, amount });
-
-    res.status(201).json({ message: 'Deposit request submitted successfully', proofUrl });
+    res.status(201).json({ message: 'Deposit request submitted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Error creating deposit', error: error.message });
+  }
+};
+
+exports.getParentDeposits = async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT d.deposit_id, d.student_id, d.amount, d.currency, d.note, d.status, d.created_at,
+              u.first_name, u.last_name
+       FROM parents p
+       JOIN students s ON s.parent_id = p.parent_id
+       JOIN deposits d ON d.student_id = s.student_id
+       JOIN users u ON s.user_id = u.user_id
+       WHERE p.user_id = ?
+       ORDER BY d.created_at DESC`,
+      [req.user.userId]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching deposits', error: error.message });
   }
 };
 

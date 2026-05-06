@@ -20,6 +20,7 @@ router.get('/org/stats', authenticate, authorize('organization'), dashboardContr
 
 // --- Parent Routes ---
 router.get('/parent/children', authenticate, authorize('parent'), dashboardController.getChildrenStats);
+router.get('/parent/deposits', authenticate, authorize('parent'), dashboardController.getParentDeposits);
 router.post('/parent/deposit', authenticate, authorize('parent'), upload.single('proof'), dashboardController.createDeposit);
 
 // --- Student Routes ---
