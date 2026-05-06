@@ -25,16 +25,28 @@ const notificationController = {
   async markAsRead(req, res) {
     try {
       const userId = req.user.userId;
-      const { notificationIds } = req.body;
+      const { notification_ids, all, is_read } = req.body;
+      const pool = require('../config/db');
 
-      if (!notificationIds || !Array.isArray(notificationIds)) {
-        return res.status(400).json({ success: false, message: 'notificationIds array is required' });
+      if (all) {
+        await pool.execute(
+          'UPDATE notifications SET is_read = TRUE WHERE user_id = ?',
+          [userId]
+        );
+      } else if (Array.isArray(notification_ids) && notification_ids.length > 0) {
+        const placeholders = notification_ids.map(() => '?').join(',');
+        const readValue = is_read === false ? 0 : 1;
+        await pool.execute(
+          `UPDATE notifications SET is_read = ? WHERE notification_id IN (${placeholders}) AND user_id = ?`,
+          [readValue, ...notification_ids, userId]
+        );
+      } else {
+        return res.status(400).json({ success: false, message: 'notification_ids array or all:true required' });
       }
 
-      await notificationService.markNotificationsAsRead(userId, notificationIds);
-      res.json({ success: true, message: 'Notifications marked as read' });
+      res.json({ success: true });
     } catch (error) {
-      res.status(500).json({ success: false, message: 'Error marking notifications as read', error: error.message });
+      res.status(500).json({ success: false, message: 'Error updating notifications', error: error.message });
     }
   },
 
