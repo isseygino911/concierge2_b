@@ -8,7 +8,8 @@ router.post('/login', authController.login);
 router.post('/signup', authController.signup);
 router.post('/request-password-reset', authController.requestPasswordReset);
 router.post('/reset-password', authController.resetPassword);
-router.post('/accept-invitation', authController.acceptInvitation);
+router.get('/validate-token/:token', authController.validateInviteToken);
+router.post('/register-from-invite', authController.registerFromInvite);
 
 // Protected routes
 router.post('/invite', authenticate, authorize('super_admin', 'admin', 'sales'), authController.createInvitation);

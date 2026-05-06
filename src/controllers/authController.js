@@ -100,15 +100,14 @@ const resetPassword = async (req, res) => {
   }
 };
 
-const acceptInvitation = async (req, res) => {
-  const { token, password, firstName, lastName, phone } = req.body;
+const registerFromInvite = async (req, res) => {
+  const { token, password } = req.body;
 
   if (!token || !password) {
     return res.status(400).json({ message: 'Token and password are required' });
   }
 
   try {
-    // 1. Validate token, expiry, and usage
     const [tokens] = await pool.execute(
       'SELECT * FROM invitation_tokens WHERE token = ? AND is_used = FALSE AND expires_at > NOW()',
       [token]
@@ -120,45 +119,26 @@ const acceptInvitation = async (req, res) => {
 
     const invitation = tokens[0];
 
-    // 2. Check if user already exists with this email
     const [existingUsers] = await pool.execute('SELECT user_id FROM users WHERE email = ?', [invitation.email]);
     if (existingUsers.length > 0) {
       return res.status(400).json({ message: 'An account already exists with this email' });
     }
 
-    // 3. Create user
     const hashedPassword = await hashPassword(password);
     const [userResult] = await pool.execute(
-      'INSERT INTO users (role_id, email, password_hash, first_name, last_name, phone) VALUES (?, ?, ?, ?, ?, ?)',
-      [invitation.role_id, invitation.email, hashedPassword, firstName || '', lastName || '', phone || '']
+      'INSERT INTO users (role_id, email, password_hash) VALUES (?, ?, ?)',
+      [invitation.role_id, invitation.email, hashedPassword]
     );
 
     const userId = userResult.insertId;
-
-    // 4. Handle role-specific table entries
     const roleName = (await pool.execute('SELECT role_name FROM roles WHERE role_id = ?', [invitation.role_id]))[0][0].role_name;
 
     if (roleName === 'organization') {
       await pool.execute('INSERT INTO organization_admins (user_id, org_id) VALUES (?, ?)', [userId, invitation.org_id]);
     } else if (roleName === 'parent') {
       await pool.execute('INSERT INTO parents (user_id, org_id) VALUES (?, ?)', [userId, invitation.org_id]);
-    } else if (roleName === 'student') {
-      // Invitation acceptance must create the `students` row; onboarding Step 2 depends on it.
-      if (!invitation.org_id) {
-        return res.status(400).json({
-          message: 'Organization is required for student invitations.',
-        });
-      }
-
-      // Ensure the student row exists (and is scoped to the invited org).
-      await pool.execute(
-        'INSERT INTO students (user_id, org_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE org_id = VALUES(org_id)',
-        [userId, invitation.org_id]
-      );
     }
-
-    // 5. Mark token as used
-    await pool.execute('UPDATE invitation_tokens SET is_used = TRUE WHERE token_id = ?', [invitation.token_id]);
+    // student rows are created by onboardingController.completeOnboarding
 
     const authToken = generateToken({ userId, role: roleName });
 
@@ -169,7 +149,25 @@ const acceptInvitation = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Invitation acceptance error:', error);
+    console.error('Register from invite error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const validateInviteToken = async (req, res) => {
+  const { token } = req.params;
+  try {
+    const [rows] = await pool.execute(
+      `SELECT it.email, it.org_id, o.name AS org_name
+       FROM invitation_tokens it
+       LEFT JOIN organizations o ON it.org_id = o.org_id
+       WHERE it.token = ? AND it.is_used = FALSE AND it.expires_at > NOW()`,
+      [token]
+    );
+    if (rows.length === 0) return res.status(400).json({ message: 'Invalid, expired, or already used invitation.' });
+    res.json({ email: rows[0].email, org_id: rows[0].org_id, org_name: rows[0].org_name });
+  } catch (error) {
+    console.error('Validate token error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -231,6 +229,17 @@ const createInvitation = async (req, res) => {
   }
 
   try {
+    const [existing] = await pool.execute(
+      `SELECT u.user_id, s.student_id
+       FROM users u
+       LEFT JOIN students s ON s.user_id = u.user_id
+       WHERE u.email = ?`,
+      [email]
+    );
+    if (existing.length > 0 && existing[0].student_id !== null) {
+      return res.status(409).json({ message: 'This student has already completed onboarding.' });
+    }
+
     const token = generateRandomToken();
     // 7-day expiry logic
     const expiresAt = new Date();
@@ -278,7 +287,8 @@ module.exports = {
   login,
   requestPasswordReset,
   resetPassword,
-  acceptInvitation,
+  registerFromInvite,
+  validateInviteToken,
   signup,
   createInvitation,
   getInvitations,

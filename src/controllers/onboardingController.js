@@ -23,7 +23,7 @@ exports.completeOnboarding = async (req, res) => {
     return res.status(400).json({ message: 'Invalid form data. Please try again.' });
   }
 
-  const { signature_data, org_id: orgIdFromClient } = req.body;
+  const { signature_data, org_id: orgIdFromClient, invite_token } = req.body;
 
   const {
     first_name, last_name, phone, date_of_birth, grade_level,
@@ -38,21 +38,16 @@ exports.completeOnboarding = async (req, res) => {
     // 1. Upload voice to S3 first — if this fails, nothing is written to DB
     const voiceS3Key = await uploadToS3(voiceFile);
 
-    // 2. Resolve org_id
-    let org_id = orgIdFromClient || null;
-    if (!org_id) {
-      const [userRows] = await db.execute('SELECT email FROM users WHERE user_id = ?', [userId]);
-      const email = userRows?.[0]?.email;
-      if (email) {
-        const [orgRows] = await db.execute(
-          `SELECT org_id FROM invitation_tokens
-           WHERE email = ? AND org_id IS NOT NULL
-           ORDER BY created_at DESC LIMIT 1`,
-          [email]
-        );
-        org_id = orgRows?.[0]?.org_id || null;
-      }
+    // 2. Resolve org_id — prefer invite_token lookup, fall back to client-supplied value
+    let org_id = null;
+    if (invite_token) {
+      const [tokenRows] = await db.execute(
+        'SELECT org_id FROM invitation_tokens WHERE token = ? AND org_id IS NOT NULL LIMIT 1',
+        [invite_token]
+      );
+      org_id = tokenRows?.[0]?.org_id || null;
     }
+    if (!org_id) org_id = orgIdFromClient || null;
 
     if (!org_id) {
       return res.status(400).json({ message: 'Organization could not be determined. Please use the original invitation link.' });
@@ -148,7 +143,15 @@ exports.completeOnboarding = async (req, res) => {
       [student.student_id, voiceS3Key, pdfS3Key, signature_data || null]
     );
 
-    // 10. Notify sales
+    // 10. Mark invitation as used now that onboarding is fully complete
+    if (invite_token) {
+      await db.execute(
+        'UPDATE invitation_tokens SET is_used = TRUE WHERE token = ?',
+        [invite_token]
+      );
+    }
+
+    // 11. Notify sales
     await notificationService.notifyEvent('STUDENT_REGISTRATION_COMPLETE', {
       studentName: `${first_name} ${last_name}`,
     });
