@@ -179,14 +179,15 @@ exports.getOrgStats = async (req, res) => {
 
 exports.getChildrenStats = async (req, res) => {
   try {
-    const parentId = req.user.parent_id; // Assumes parent_id is in token
     const [children] = await pool.execute(
-      `SELECT s.student_id, u.first_name, u.last_name, 
-       (SELECT COUNT(*) FROM tickets WHERE student_id = s.student_id) as ticket_count
-       FROM students s 
-       JOIN users u ON s.user_id = u.user_id 
-       WHERE s.parent_id = ?`,
-      [parentId]
+      `SELECT s.student_id, u.first_name, u.last_name,
+              s.external_student_id, s.grade_level, s.intended_program, s.balance,
+              (SELECT COUNT(*) FROM tickets WHERE student_id = s.student_id) AS ticket_count
+       FROM parents p
+       JOIN students s ON s.parent_id = p.parent_id
+       JOIN users u ON s.user_id = u.user_id
+       WHERE p.user_id = ?`,
+      [req.user.userId]
     );
 
     // For cost breakdown, we would need to join with tickets and ticket_categories.

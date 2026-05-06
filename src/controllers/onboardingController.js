@@ -107,7 +107,7 @@ exports.completeOnboarding = async (req, res) => {
     // 8. Create parent user + parents row (with external ID)
     const {
       parent_first_name, parent_last_name, parent_email, parent_phone,
-      parent_wechat, relationship, parent_occupation, address,
+      parent_wechat, relationship, parent_occupation, address, parent_password,
     } = parentInfo;
 
     if (!parent_email) {
@@ -120,10 +120,10 @@ exports.completeOnboarding = async (req, res) => {
     if (existingParent.length > 0) {
       parentUserId = existingParent[0].user_id;
     } else {
-      const placeholder = await bcrypt.hash(Math.random().toString(36), 10);
+      const parentHash = await bcrypt.hash(parent_password || Math.random().toString(36), 10);
       const [parentUserResult] = await db.execute(
         'INSERT INTO users (role_id, email, password_hash, first_name, last_name, phone, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [6, parent_email, placeholder, parent_first_name || '', parent_last_name || '', parent_phone || null, 'active']
+        [6, parent_email, parentHash, parent_first_name || '', parent_last_name || '', parent_phone || null, 'active']
       );
       parentUserId = parentUserResult.insertId;
     }
