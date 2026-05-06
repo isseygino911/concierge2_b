@@ -1,7 +1,7 @@
 const db = require('../config/db');
 const { generateUniqueId } = require('../utils/idUtils');
 const { generateIntakePDF } = require('../utils/pdfUtils');
-const { uploadToS3 } = require('../utils/s3Utils');
+const { uploadToS3, getPresignedUrl } = require('../utils/s3Utils');
 const notificationService = require('../services/notificationService');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
@@ -157,7 +157,7 @@ exports.completeOnboarding = async (req, res) => {
       message: 'Onboarding completed successfully',
       studentId: externalStudentId,
       parentId: externalParentId,
-      pdfUrl: pdfS3Key,
+      pdfUrl: getPresignedUrl(pdfS3Key, 900),
     });
   } catch (error) {
     console.error('Onboarding completion error:', error);

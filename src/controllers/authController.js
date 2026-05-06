@@ -255,8 +255,8 @@ const createInvitation = async (req, res) => {
 const getInvitations = async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT it.token_id, it.email, it.expires_at, it.is_used, it.created_at,
-              r.role_name AS role, o.name AS org_name
+      `SELECT it.token_id, it.token, it.email, it.expires_at, it.is_used, it.created_at,
+              it.org_id, r.role_name AS role, o.name AS org_name
        FROM invitation_tokens it
        JOIN roles r ON it.role_id = r.role_id
        LEFT JOIN organizations o ON it.org_id = o.org_id
@@ -265,6 +265,7 @@ const getInvitations = async (req, res) => {
     );
     res.json(rows.map(r => ({
       ...r,
+      is_used: !!r.is_used,
       status: r.is_used ? 'used' : new Date(r.expires_at) < new Date() ? 'expired' : 'pending',
     })));
   } catch (error) {
