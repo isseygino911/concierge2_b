@@ -202,7 +202,10 @@ const signup = async (req, res) => {
 
     const userId = userResult.insertId;
 
-    // 4. Generate token and return
+    // 4. Create sales_reps profile row
+    await pool.execute('INSERT INTO sales_reps (user_id) VALUES (?)', [userId]);
+
+    // 5. Generate token and return
     const token = generateToken({ userId, role: 'sales' });
 
     res.status(201).json({

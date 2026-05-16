@@ -5,17 +5,28 @@ const notificationService = require('../services/notificationService');
 // --- Sales Dashboard Logic ---
 
 exports.getPendingDeposits = async (req, res) => {
+  const isSuperAdmin = req.user.role === 'super_admin';
   try {
-    const [rows] = await pool.execute(
-      `SELECT d.deposit_id, d.student_id, d.amount, d.currency, d.note, d.proof_url,
-              d.status, d.reject_reason, d.created_at,
-              u.first_name, u.last_name, s.grade_level, o.name AS org_name
-       FROM deposits d
-       JOIN students s ON d.student_id = s.student_id
-       JOIN users u ON s.user_id = u.user_id
-       LEFT JOIN organizations o ON s.org_id = o.org_id
-       ORDER BY d.created_at DESC`
-    );
+    const query = isSuperAdmin
+      ? `SELECT d.deposit_id, d.student_id, d.amount, d.currency, d.note, d.proof_url,
+                d.status, d.reject_reason, d.created_at,
+                u.first_name, u.last_name, s.grade_level, o.name AS org_name
+         FROM deposits d
+         JOIN students s ON d.student_id = s.student_id
+         JOIN users u ON s.user_id = u.user_id
+         LEFT JOIN organizations o ON s.org_id = o.org_id
+         ORDER BY d.created_at DESC`
+      : `SELECT d.deposit_id, d.student_id, d.amount, d.currency, d.note, d.proof_url,
+                d.status, d.reject_reason, d.created_at,
+                u.first_name, u.last_name, s.grade_level, o.name AS org_name
+         FROM deposits d
+         JOIN students s ON d.student_id = s.student_id
+         JOIN users u ON s.user_id = u.user_id
+         JOIN organizations o ON s.org_id = o.org_id
+         JOIN sales_reps sr ON o.sales_rep_id = sr.sales_rep_id AND sr.user_id = ?
+         ORDER BY d.created_at DESC`;
+    const params = isSuperAdmin ? [] : [req.user.userId];
+    const [rows] = await pool.execute(query, params);
     const result = rows.map(d => ({
       ...d,
       proof_url: d.proof_url ? getPresignedUrl(d.proof_url, 900) : null,
@@ -29,6 +40,7 @@ exports.getPendingDeposits = async (req, res) => {
 exports.updateDepositStatus = async (req, res) => {
   const { id } = req.params;
   const { status, reason } = req.body;
+  const isSuperAdmin = req.user.role === 'super_admin';
 
   if (!['approved', 'rejected'].includes(status)) {
     return res.status(400).json({ message: 'Invalid status' });
@@ -38,14 +50,32 @@ exports.updateDepositStatus = async (req, res) => {
   try {
     await connection.beginTransaction();
 
+    // Verify the deposit belongs to this sales rep's org (or super_admin bypasses)
+    const ownershipQuery = isSuperAdmin
+      ? 'SELECT d.student_id, d.amount FROM deposits d WHERE d.deposit_id = ?'
+      : `SELECT d.student_id, d.amount FROM deposits d
+         JOIN students s ON d.student_id = s.student_id
+         JOIN organizations o ON s.org_id = o.org_id
+         JOIN sales_reps sr ON o.sales_rep_id = sr.sales_rep_id AND sr.user_id = ?
+         WHERE d.deposit_id = ?`;
+    const ownershipParams = isSuperAdmin ? [id] : [req.user.userId, id];
+    const [deposit] = await connection.execute(ownershipQuery, ownershipParams);
+    if (deposit.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Deposit not found' });
+    }
+
     await connection.execute(
       'UPDATE deposits SET status = ?, reject_reason = ?, reviewed_by = ? WHERE deposit_id = ?',
       [status, reason || null, req.user.userId, id]
     );
 
     if (status === 'approved') {
-      const [deposit] = await connection.execute('SELECT student_id, amount FROM deposits WHERE deposit_id = ?', [id]);
-      if (deposit.length === 0) throw new Error('Deposit not found');
+      // Check if deposit currency matches system base currency (CAD)
+      if (deposit[0].currency !== 'CAD') {
+        await connection.rollback();
+        return res.status(400).json({ message: `Cannot automatically approve deposit in ${deposit[0].currency}. Only CAD is supported for automatic balance updates.` });
+      }
       await connection.execute(
         'UPDATE students SET balance = balance + ? WHERE student_id = ?',
         [deposit[0].amount, deposit[0].student_id]
@@ -63,13 +93,17 @@ exports.updateDepositStatus = async (req, res) => {
 };
 
 exports.getOrganizations = async (req, res) => {
+  const isSuperAdmin = req.user.role === 'super_admin';
   try {
-    const [rows] = await pool.execute(
-      `SELECT o.*,
-        (SELECT COUNT(*) FROM students s WHERE s.org_id = o.org_id) AS student_count
-       FROM organizations o
-       ORDER BY o.created_at DESC`
-    );
+    const query = isSuperAdmin
+      ? `SELECT o.*, (SELECT COUNT(*) FROM students s WHERE s.org_id = o.org_id) AS student_count
+         FROM organizations o ORDER BY o.created_at DESC`
+      : `SELECT o.*, (SELECT COUNT(*) FROM students s WHERE s.org_id = o.org_id) AS student_count
+         FROM organizations o
+         JOIN sales_reps sr ON o.sales_rep_id = sr.sales_rep_id AND sr.user_id = ?
+         ORDER BY o.created_at DESC`;
+    const params = isSuperAdmin ? [] : [req.user.userId];
+    const [rows] = await pool.execute(query, params);
     res.json(rows);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching organizations', error: error.message });
@@ -82,9 +116,13 @@ exports.createOrganization = async (req, res) => {
     return res.status(400).json({ message: 'Organization name and contact email are required' });
   }
   try {
+    const [repRows] = await pool.execute('SELECT sales_rep_id FROM sales_reps WHERE user_id = ?', [req.user.userId]);
+    if (repRows.length === 0) return res.status(403).json({ message: 'Sales rep profile not found' });
+    const salesRepId = repRows[0].sales_rep_id;
+
     const [result] = await pool.execute(
-      'INSERT INTO organizations (name, city, province, address, contact_email, contact_phone, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, city || null, province || null, address || null, contact_email, contact_phone || null, 'active']
+      'INSERT INTO organizations (name, city, province, address, contact_email, contact_phone, status, sales_rep_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, city || null, province || null, address || null, contact_email, contact_phone || null, 'active', salesRepId]
     );
     const [newOrg] = await pool.execute('SELECT * FROM organizations WHERE org_id = ?', [result.insertId]);
     res.status(201).json(newOrg[0]);
@@ -96,12 +134,27 @@ exports.createOrganization = async (req, res) => {
 exports.updateOrganization = async (req, res) => {
   const { id } = req.params;
   const { name, city, province, address, contact_email, contact_phone, status } = req.body;
+  const isSuperAdmin = req.user.role === 'super_admin';
   try {
+    // Verify ownership before updating
+    const ownerCheck = isSuperAdmin
+      ? 'SELECT org_id FROM organizations WHERE org_id = ?'
+      : `SELECT o.org_id FROM organizations o
+         JOIN sales_reps sr ON o.sales_rep_id = sr.sales_rep_id AND sr.user_id = ?
+         WHERE o.org_id = ?`;
+    const [owned] = await pool.execute(ownerCheck, isSuperAdmin ? [id] : [req.user.userId, id]);
+    if (owned.length === 0) return res.status(404).json({ message: 'Organization not found' });
+
     await pool.execute(
       'UPDATE organizations SET name = ?, city = ?, province = ?, address = ?, contact_email = ?, contact_phone = ?, status = ? WHERE org_id = ?',
       [name, city || null, province || null, address || null, contact_email, contact_phone || null, status || 'active', id]
     );
-    await notificationService.notifyEvent('ORG_PROFILE_UPDATED', { orgName: name });
+
+    // Fetch the organization again to get the latest name (handles PATCH where name might be undefined)
+    const [orgRows] = await pool.execute('SELECT name FROM organizations WHERE org_id = ?', [id]);
+    const updatedOrgName = orgRows[0]?.name;
+
+    await notificationService.notifyEvent('ORG_PROFILE_UPDATED', { orgName: updatedOrgName });
     res.json({ message: 'Organization updated successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Error updating organization', error: error.message });
@@ -110,16 +163,33 @@ exports.updateOrganization = async (req, res) => {
 
 exports.getStudents = async (req, res) => {
   const { org_id } = req.query;
+  const isSuperAdmin = req.user.role === 'super_admin';
   try {
-    const where = org_id ? 'WHERE s.org_id = ?' : '';
-    const params = org_id ? [org_id] : [];
+    let where = '';
+    let params = [];
+
+    if (isSuperAdmin) {
+      if (org_id) { where = 'WHERE s.org_id = ?'; params = [org_id]; }
+    } else {
+      if (org_id) {
+        where = 'WHERE s.org_id = ? AND sr.user_id = ?';
+        params = [org_id, req.user.userId];
+      } else {
+        where = 'WHERE sr.user_id = ?';
+        params = [req.user.userId];
+      }
+    }
+
+    const orgJoin = isSuperAdmin
+      ? 'LEFT JOIN organizations o ON s.org_id = o.org_id'
+      : 'JOIN organizations o ON s.org_id = o.org_id JOIN sales_reps sr ON o.sales_rep_id = sr.sales_rep_id';
     const [rows] = await pool.execute(
       `SELECT s.student_id, u.first_name, u.last_name, u.email, u.status,
               s.grade_level, s.balance, s.org_id, o.name AS org_name, s.enrollment_date, s.external_student_id,
               ir.pdf_s3_key, ir.voice_s3_key
        FROM students s
        JOIN users u ON s.user_id = u.user_id
-       LEFT JOIN organizations o ON s.org_id = o.org_id
+       ${orgJoin}
        LEFT JOIN intake_records ir ON ir.student_id = s.student_id
        ${where}
        ORDER BY u.last_name ASC`,
@@ -140,10 +210,16 @@ exports.getStudents = async (req, res) => {
 
 exports.updateStudentStatus = async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body; // 'active', 'inactive', 'suspended'
+  const { status } = req.body;
+  const isSuperAdmin = req.user.role === 'super_admin';
   try {
-    // Student status is actually on the users table
-    const [student] = await pool.execute('SELECT user_id FROM students WHERE student_id = ?', [id]);
+    const studentQuery = isSuperAdmin
+      ? 'SELECT s.user_id FROM students s WHERE s.student_id = ?'
+      : `SELECT s.user_id FROM students s
+         JOIN organizations o ON s.org_id = o.org_id
+         JOIN sales_reps sr ON o.sales_rep_id = sr.sales_rep_id AND sr.user_id = ?
+         WHERE s.student_id = ?`;
+    const [student] = await pool.execute(studentQuery, isSuperAdmin ? [id] : [req.user.userId, id]);
     if (student.length === 0) return res.status(404).json({ message: 'Student not found' });
 
     await pool.execute('UPDATE users SET status = ? WHERE user_id = ?', [status, student[0].user_id]);

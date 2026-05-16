@@ -10,7 +10,7 @@ const run = async () => {
       "ALTER TABLE organizations ADD COLUMN city VARCHAR(100) AFTER address",
       "ALTER TABLE organizations ADD COLUMN province VARCHAR(100) AFTER city",
       "ALTER TABLE organizations ADD COLUMN status ENUM('active','inactive') DEFAULT 'active' AFTER province",
-      "ALTER TABLE organizations ADD COLUMN sales_user_id INT AFTER status",
+      "ALTER TABLE organizations ADD COLUMN sales_rep_id INT AFTER status",
     ];
     for (const sql of alterOrg) {
       try { await conn.query(sql); console.log('  OK:', sql.slice(0, 60)); }
