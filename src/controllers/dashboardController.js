@@ -70,7 +70,7 @@ exports.updateDepositStatus = async (req, res) => {
       [status, reason || null, req.user.userId, id]
     );
 
-    if (status === 'approved' && deposit[0].currency === 'CAD') {
+    if (status === 'approved') {
       await connection.execute(
         'UPDATE students SET balance = balance + ? WHERE student_id = ?',
         [deposit[0].amount, deposit[0].student_id]
@@ -78,10 +78,7 @@ exports.updateDepositStatus = async (req, res) => {
     }
 
     await connection.commit();
-    const note = status === 'approved' && deposit[0].currency !== 'CAD'
-      ? ` (balance not auto-credited — ${deposit[0].currency} requires manual conversion)`
-      : '';
-    res.json({ message: `Deposit ${status} successfully${note}` });
+    res.json({ message: `Deposit ${status} successfully` });
   } catch (error) {
     await connection.rollback();
     res.status(500).json({ message: 'Error updating deposit status', error: error.message });
@@ -271,6 +268,7 @@ exports.getChildrenStats = async (req, res) => {
     const [children] = await pool.execute(
       `SELECT s.student_id, u.first_name, u.last_name,
               s.external_student_id, s.grade_level, s.intended_program, s.balance,
+              COALESCE((SELECT currency FROM deposits WHERE student_id = s.student_id AND status = 'approved' ORDER BY created_at DESC LIMIT 1), 'USD') AS currency,
               (SELECT COUNT(*) FROM tickets WHERE student_id = s.student_id) AS ticket_count
        FROM parents p
        JOIN students s ON s.parent_id = p.parent_id
@@ -352,12 +350,14 @@ exports.getParentDeposits = async (req, res) => {
 exports.getStudentBalance = async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      'SELECT s.balance, s.external_student_id, u.first_name, u.last_name FROM students s JOIN users u ON s.user_id = u.user_id WHERE s.user_id = ?',
+      `SELECT s.balance, s.external_student_id, u.first_name, u.last_name,
+        COALESCE((SELECT currency FROM deposits WHERE student_id = s.student_id AND status = 'approved' ORDER BY created_at DESC LIMIT 1), 'USD') AS currency
+       FROM students s JOIN users u ON s.user_id = u.user_id WHERE s.user_id = ?`,
       [req.user.userId]
     );
     if (rows.length === 0) return res.status(404).json({ message: 'Student not found' });
     const s = rows[0];
-    res.json({ balance: parseFloat(s.balance), student_id: s.external_student_id, name: `${s.first_name} ${s.last_name}` });
+    res.json({ balance: parseFloat(s.balance), currency: s.currency, student_id: s.external_student_id, name: `${s.first_name} ${s.last_name}` });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching balance', error: error.message });
   }
