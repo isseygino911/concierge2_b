@@ -52,8 +52,8 @@ exports.updateDepositStatus = async (req, res) => {
 
     // Verify the deposit belongs to this sales rep's org (or super_admin bypasses)
     const ownershipQuery = isSuperAdmin
-      ? 'SELECT d.student_id, d.amount FROM deposits d WHERE d.deposit_id = ?'
-      : `SELECT d.student_id, d.amount FROM deposits d
+      ? 'SELECT d.student_id, d.amount, d.currency FROM deposits d WHERE d.deposit_id = ?'
+      : `SELECT d.student_id, d.amount, d.currency FROM deposits d
          JOIN students s ON d.student_id = s.student_id
          JOIN organizations o ON s.org_id = o.org_id
          JOIN sales_reps sr ON o.sales_rep_id = sr.sales_rep_id AND sr.user_id = ?
@@ -70,12 +70,7 @@ exports.updateDepositStatus = async (req, res) => {
       [status, reason || null, req.user.userId, id]
     );
 
-    if (status === 'approved') {
-      // Check if deposit currency matches system base currency (CAD)
-      if (deposit[0].currency !== 'CAD') {
-        await connection.rollback();
-        return res.status(400).json({ message: `Cannot automatically approve deposit in ${deposit[0].currency}. Only CAD is supported for automatic balance updates.` });
-      }
+    if (status === 'approved' && deposit[0].currency === 'CAD') {
       await connection.execute(
         'UPDATE students SET balance = balance + ? WHERE student_id = ?',
         [deposit[0].amount, deposit[0].student_id]
@@ -83,7 +78,10 @@ exports.updateDepositStatus = async (req, res) => {
     }
 
     await connection.commit();
-    res.json({ message: `Deposit ${status} successfully` });
+    const note = status === 'approved' && deposit[0].currency !== 'CAD'
+      ? ` (balance not auto-credited — ${deposit[0].currency} requires manual conversion)`
+      : '';
+    res.json({ message: `Deposit ${status} successfully${note}` });
   } catch (error) {
     await connection.rollback();
     res.status(500).json({ message: 'Error updating deposit status', error: error.message });

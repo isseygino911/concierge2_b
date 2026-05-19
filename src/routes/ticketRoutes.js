@@ -79,9 +79,9 @@ router.post(
 );
 
 router.get(
-  '/categories', 
+  '/categories',
   authenticate,
-  authorize('super_admin'), 
+  authorize('super_admin', 'admin', 'student'),
   ticketController.getAllCategories
 );
 
