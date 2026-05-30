@@ -51,21 +51,54 @@ const notificationService = {
       case 'STUDENT_REGISTRATION_COMPLETE': {
         const title = 'New Student Registration';
         const message = `Student ${data.studentName || 'Unknown'} has completed registration.`;
-        await this.notifyRole('sales', title, message, 'onboarding');
+        if (data.studentId) {
+          const [repRows] = await pool.query(
+            `SELECT sr.user_id FROM sales_reps sr
+             JOIN organizations o ON o.sales_rep_id = sr.sales_rep_id
+             JOIN students s ON s.org_id = o.org_id
+             WHERE s.student_id = ?`,
+            [data.studentId]
+          );
+          if (repRows.length > 0) await this.sendNotification(repRows[0].user_id, title, message, 'onboarding');
+        } else {
+          await this.notifyRole('sales', title, message, 'onboarding');
+        }
         break;
       }
 
       case 'ORG_PROFILE_UPDATED': {
         const title = 'Organization Profile Updated';
         const message = `Organization ${data.orgName || 'Unknown'} updated their profile.`;
-        await this.notifyRole('sales', title, message, 'organization');
+        if (data.orgId) {
+          const [repRows] = await pool.query(
+            `SELECT sr.user_id FROM sales_reps sr
+             JOIN organizations o ON o.sales_rep_id = sr.sales_rep_id
+             WHERE o.org_id = ?`,
+            [data.orgId]
+          );
+          if (repRows.length > 0) await this.sendNotification(repRows[0].user_id, title, message, 'organization');
+        } else {
+          await this.notifyRole('sales', title, message, 'organization');
+        }
         break;
       }
 
       case 'TICKET_SUBMITTED': {
         const title = 'New Ticket Submitted';
         const message = `New ticket: ${data.title || 'No Title'}`;
-        await this.notifyRole('sales', title, message, 'ticket');
+        // Notify only the sales rep who owns the student's org
+        if (data.studentId) {
+          const [repRows] = await pool.query(
+            `SELECT sr.user_id FROM sales_reps sr
+             JOIN organizations o ON o.sales_rep_id = sr.sales_rep_id
+             JOIN students s ON s.org_id = o.org_id
+             WHERE s.student_id = ?`,
+            [data.studentId]
+          );
+          if (repRows.length > 0) await this.sendNotification(repRows[0].user_id, title, message, 'ticket');
+        } else {
+          await this.notifyRole('sales', title, message, 'ticket');
+        }
         await this.notifyRole('super_admin', title, message, 'ticket');
         if (data.orgId) {
           const [orgAdmins] = await pool.query('SELECT user_id FROM organization_admins WHERE org_id = ?', [data.orgId]);
@@ -95,7 +128,20 @@ const notificationService = {
       case 'DEPOSIT_UPLOADED': {
         const title = 'New Deposit Submitted';
         const message = `Deposit uploaded by ${data.studentName || 'Unknown'} — amount: ${data.amount} ${data.currency || 'CAD'}`;
-        await this.notifyRole('sales', title, message, 'deposit');
+        if (data.studentId) {
+          const [repRows] = await pool.query(
+            `SELECT sr.user_id FROM sales_reps sr
+             JOIN organizations o ON o.sales_rep_id = sr.sales_rep_id
+             JOIN students s ON s.org_id = o.org_id
+             WHERE s.student_id = ?`,
+            [data.studentId]
+          );
+          if (repRows.length > 0) {
+            await this.sendNotification(repRows[0].user_id, title, message, 'deposit');
+          }
+        } else {
+          await this.notifyRole('sales', title, message, 'deposit');
+        }
         break;
       }
 

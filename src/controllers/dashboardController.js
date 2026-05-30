@@ -149,7 +149,7 @@ exports.updateOrganization = async (req, res) => {
     const [orgRows] = await pool.execute('SELECT name FROM organizations WHERE org_id = ?', [id]);
     const updatedOrgName = orgRows[0]?.name;
 
-    await notificationService.notifyEvent('ORG_PROFILE_UPDATED', { orgName: updatedOrgName });
+    await notificationService.notifyEvent('ORG_PROFILE_UPDATED', { orgName: updatedOrgName, orgId: parseInt(id) });
     res.json({ message: 'Organization updated successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Error updating organization', error: error.message });
@@ -314,7 +314,7 @@ exports.createDeposit = async (req, res) => {
       [student_id]
     );
     const studentName = studentRows.length > 0 ? `${studentRows[0].first_name} ${studentRows[0].last_name}` : 'Unknown';
-    await notificationService.notifyEvent('DEPOSIT_UPLOADED', { studentName, amount, currency: currency || 'CAD' });
+    await notificationService.notifyEvent('DEPOSIT_UPLOADED', { studentName, studentId: student_id, amount, currency: currency || 'CAD' });
 
     res.status(201).json({ message: 'Deposit request submitted successfully' });
   } catch (error) {

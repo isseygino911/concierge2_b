@@ -37,7 +37,7 @@ const createTicket = async (req, res) => {
       [student_id, org_id, title, description, priority, category_id, 'open']
     );
 
-    await notificationService.notifyEvent('TICKET_SUBMITTED', { title, orgId: org_id, parentId: parent_id });
+    await notificationService.notifyEvent('TICKET_SUBMITTED', { title, studentId: student_id, orgId: org_id, parentId: parent_id });
 
     res.status(201).json({ message: 'Ticket created successfully', ticketId: result.insertId });
   } catch (error) {
@@ -74,6 +74,7 @@ const createEmergencyTicket = async (req, res) => {
 
     await notificationService.notifyEvent('TICKET_SUBMITTED', {
       title: 'EMERGENCY: Immediate Assistance Required',
+      studentId: student_id,
       orgId: org_id,
       parentId: parent_id,
     });
@@ -93,8 +94,8 @@ const createEmergencyTicket = async (req, res) => {
 
 const addComment = async (req, res) => {
   const { ticket_id, comment } = req.body;
-    const userId = req.user.userId;
-    const userRole = req.user.role;
+  const userId = req.user.userId;
+  const userRole = req.user.role;
 
   if (!ticket_id || !comment) {
     return res.status(400).json({ error: 'Ticket ID and comment are required' });
@@ -108,11 +109,18 @@ const addComment = async (req, res) => {
 
     const ticketData = ticket[0];
 
+    // Resolve student_id from user_id for student ownership check
+    let studentId = null;
+    if (userRole === 'student') {
+      const [sRows] = await pool.query('SELECT student_id FROM students WHERE user_id = ?', [userId]);
+      studentId = sRows.length > 0 ? sRows[0].student_id : null;
+    }
+
     // RBAC for commenting
     let canComment = false;
     if (userRole === 'super_admin') {
       canComment = true;
-    } else if (userRole === 'student' && ticketData.student_id === userId) {
+    } else if (userRole === 'student' && ticketData.student_id === studentId) {
       canComment = true;
     } else if (userRole === 'admin' && ticketData.assigned_admin_id === userId) {
       canComment = true;
@@ -138,8 +146,8 @@ const addComment = async (req, res) => {
 
 const getComments = async (req, res) => {
   const { ticket_id } = req.params;
-    const userId = req.user.userId;
-    const userRole = req.user.role;
+  const userId = req.user.userId;
+  const userRole = req.user.role;
 
   try {
     const [ticket] = await pool.query('SELECT * FROM tickets WHERE ticket_id = ?', [ticket_id]);
@@ -149,11 +157,18 @@ const getComments = async (req, res) => {
 
     const ticketData = ticket[0];
 
+    // Resolve student_id from user_id for student ownership check
+    let studentId = null;
+    if (userRole === 'student') {
+      const [sRows] = await pool.query('SELECT student_id FROM students WHERE user_id = ?', [userId]);
+      studentId = sRows.length > 0 ? sRows[0].student_id : null;
+    }
+
     // RBAC for viewing comments
     let canView = false;
     if (userRole === 'super_admin') {
       canView = true;
-    } else if (userRole === 'student' && ticketData.student_id === userId) {
+    } else if (userRole === 'student' && ticketData.student_id === studentId) {
       canView = true;
     } else if (userRole === 'admin' && ticketData.assigned_admin_id === userId) {
       canView = true;
@@ -237,9 +252,11 @@ const assignTicket = async (req, res) => {
 const getMyTickets = async (req, res) => {
   const userId = req.user.userId;
   try {
+    const [studentRows] = await pool.query('SELECT student_id FROM students WHERE user_id = ?', [userId]);
+    if (studentRows.length === 0) return res.json([]);
     const [tickets] = await pool.query(
       'SELECT * FROM tickets WHERE student_id = ? ORDER BY created_at DESC',
-      [userId]
+      [studentRows[0].student_id]
     );
     res.json(tickets);
   } catch (error) {

@@ -26,9 +26,10 @@ exports.completeOnboarding = async (req, res) => {
   const { signature_data, org_id: orgIdFromClient, invite_token } = req.body;
 
   const {
-    first_name, last_name, phone, date_of_birth, grade_level,
+    first_name, last_name, phone, dob, date_of_birth: date_of_birth_raw, grade_level,
     chinese_name, passport_number, wechat_id, intended_program,
   } = bioData;
+  const date_of_birth = dob || date_of_birth_raw || null;
 
   if (!first_name || !last_name) {
     return res.status(400).json({ message: 'Student name is required.' });
@@ -99,7 +100,7 @@ exports.completeOnboarding = async (req, res) => {
     );
 
     // 7. Generate + upload intake PDF
-    const { filepath, filename } = await generateIntakePDF(student, questionnaireData);
+    const { filepath, filename } = await generateIntakePDF(student, questionnaireData, signature_data);
     const pdfBuffer = fs.readFileSync(filepath);
     const pdfS3Key = await uploadToS3({ originalname: filename, buffer: pdfBuffer, mimetype: 'application/pdf' });
     fs.unlinkSync(filepath);
@@ -154,6 +155,7 @@ exports.completeOnboarding = async (req, res) => {
     // 11. Notify sales
     await notificationService.notifyEvent('STUDENT_REGISTRATION_COMPLETE', {
       studentName: `${first_name} ${last_name}`,
+      studentId: student.student_id,
     });
 
     res.status(200).json({
