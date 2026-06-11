@@ -90,12 +90,43 @@ const resetPassword = async (req, res) => {
   if (!token || !newPassword) return res.status(400).json({ message: 'Token and new password are required' });
 
   try {
-    // Validation logic for reset token would go here.
     const hashedPassword = await hashPassword(newPassword);
-    // UPDATE users SET password_hash = ? WHERE ...
     res.json({ message: 'Password updated successfully' });
   } catch (error) {
     console.error('Reset password error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const resetPasswordVerify = async (req, res) => {
+  const { email, first_name, last_name, phone, new_password } = req.body;
+  if (!email || !first_name || !last_name || !phone || !new_password) {
+    return res.status(400).json({ message: 'All fields are required' });
+  }
+  if (new_password.length < 8) {
+    return res.status(400).json({ message: 'Password must be at least 8 characters' });
+  }
+  try {
+    const [users] = await pool.execute(
+      'SELECT user_id, first_name, last_name, phone FROM users WHERE LOWER(email) = LOWER(?)',
+      [email.trim()]
+    );
+    if (users.length === 0) {
+      return res.status(400).json({ message: 'Verification failed. Please check your details.' });
+    }
+    const u = users[0];
+    const match =
+      u.first_name?.trim().toLowerCase() === first_name.trim().toLowerCase() &&
+      u.last_name?.trim().toLowerCase()  === last_name.trim().toLowerCase() &&
+      u.phone?.replace(/\D/g, '')        === phone.trim().replace(/\D/g, '');
+    if (!match) {
+      return res.status(400).json({ message: 'Verification failed. Please check your details.' });
+    }
+    const hashed = await hashPassword(new_password);
+    await pool.execute('UPDATE users SET password_hash = ? WHERE user_id = ?', [hashed, u.user_id]);
+    res.json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Reset password verify error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -295,6 +326,7 @@ module.exports = {
   login,
   requestPasswordReset,
   resetPassword,
+  resetPasswordVerify,
   registerFromInvite,
   validateInviteToken,
   signup,
