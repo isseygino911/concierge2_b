@@ -228,11 +228,16 @@ exports.updateStudentStatus = async (req, res) => {
 
 exports.getOrgRoster = async (req, res) => {
   try {
-    const orgId = req.user.org_id; // Assumes org_id is in token for 'organization' role
+    const [orgRows] = await pool.execute(
+      'SELECT org_id FROM organization_admins WHERE user_id = ? LIMIT 1',
+      [req.user.userId]
+    );
+    if (orgRows.length === 0) return res.json([]);
+    const orgId = orgRows[0].org_id;
     const [rows] = await pool.execute(
-      `SELECT s.*, u.first_name, u.last_name, u.email 
-       FROM students s 
-       JOIN users u ON s.user_id = u.user_id 
+      `SELECT s.*, u.first_name, u.last_name, u.email
+       FROM students s
+       JOIN users u ON s.user_id = u.user_id
        WHERE s.org_id = ?`,
       [orgId]
     );
@@ -244,7 +249,12 @@ exports.getOrgRoster = async (req, res) => {
 
 exports.getOrgStats = async (req, res) => {
   try {
-    const orgId = req.user.org_id;
+    const [orgRows] = await pool.execute(
+      'SELECT org_id FROM organization_admins WHERE user_id = ? LIMIT 1',
+      [req.user.userId]
+    );
+    if (orgRows.length === 0) return res.json({ ticketCount: 0, totalSpend: 0 });
+    const orgId = orgRows[0].org_id;
     const [ticketCount] = await pool.execute(
       'SELECT COUNT(*) as count FROM tickets WHERE org_id = ?', [orgId]
     );

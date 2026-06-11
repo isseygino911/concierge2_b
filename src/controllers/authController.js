@@ -120,25 +120,30 @@ const registerFromInvite = async (req, res) => {
     const invitation = tokens[0];
 
     const [existingUsers] = await pool.execute('SELECT user_id FROM users WHERE email = ?', [invitation.email]);
-    if (existingUsers.length > 0) {
-      return res.status(400).json({ message: 'An account already exists with this email' });
-    }
-
     const hashedPassword = await hashPassword(password);
-    const [userResult] = await pool.execute(
-      'INSERT INTO users (role_id, email, password_hash) VALUES (?, ?, ?)',
-      [invitation.role_id, invitation.email, hashedPassword]
-    );
+    let userId;
+    let roleName;
 
-    const userId = userResult.insertId;
-    const roleName = (await pool.execute('SELECT role_name FROM roles WHERE role_id = ?', [invitation.role_id]))[0][0].role_name;
-
-    if (roleName === 'organization') {
-      await pool.execute('INSERT INTO organization_admins (user_id, org_id) VALUES (?, ?)', [userId, invitation.org_id]);
-    } else if (roleName === 'parent') {
-      await pool.execute('INSERT INTO parents (user_id, org_id) VALUES (?, ?)', [userId, invitation.org_id]);
+    if (existingUsers.length > 0) {
+      // Password reset path — update existing account
+      userId = existingUsers[0].user_id;
+      await pool.execute('UPDATE users SET password_hash = ? WHERE user_id = ?', [hashedPassword, userId]);
+      roleName = (await pool.execute('SELECT role_name FROM roles WHERE role_id = ?', [invitation.role_id]))[0][0].role_name;
+    } else {
+      // First-time registration path — create account + role row
+      const [userResult] = await pool.execute(
+        'INSERT INTO users (role_id, email, password_hash) VALUES (?, ?, ?)',
+        [invitation.role_id, invitation.email, hashedPassword]
+      );
+      userId = userResult.insertId;
+      roleName = (await pool.execute('SELECT role_name FROM roles WHERE role_id = ?', [invitation.role_id]))[0][0].role_name;
+      if (roleName === 'organization') {
+        await pool.execute('INSERT INTO organization_admins (user_id, org_id) VALUES (?, ?)', [userId, invitation.org_id]);
+      } else if (roleName === 'parent') {
+        await pool.execute('INSERT INTO parents (user_id, org_id) VALUES (?, ?)', [userId, invitation.org_id]);
+      }
+      // student rows are created by onboardingController.completeOnboarding
     }
-    // student rows are created by onboardingController.completeOnboarding
 
     const authToken = generateToken({ userId, role: roleName });
 
