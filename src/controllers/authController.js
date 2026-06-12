@@ -194,14 +194,15 @@ const validateInviteToken = async (req, res) => {
   const { token } = req.params;
   try {
     const [rows] = await pool.execute(
-      `SELECT it.email, it.org_id, o.name AS org_name
+      `SELECT it.email, it.org_id, it.role_id, o.name AS org_name, r.role_name
        FROM invitation_tokens it
        LEFT JOIN organizations o ON it.org_id = o.org_id
+       JOIN roles r ON it.role_id = r.role_id
        WHERE it.token = ? AND it.is_used = FALSE AND it.expires_at > NOW()`,
       [token]
     );
     if (rows.length === 0) return res.status(400).json({ message: 'Invalid, expired, or already used invitation.' });
-    res.json({ email: rows[0].email, org_id: rows[0].org_id, org_name: rows[0].org_name });
+    res.json({ email: rows[0].email, org_id: rows[0].org_id, org_name: rows[0].org_name, role_name: rows[0].role_name });
   } catch (error) {
     console.error('Validate token error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -322,6 +323,26 @@ const getInvitations = async (req, res) => {
   }
 };
 
+const getAssignableUsers = async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT u.user_id, u.first_name, u.last_name, r.role_name
+       FROM users u
+       JOIN roles r ON u.role_id = r.role_id
+       WHERE r.role_name IN ('admin', 'vendor') AND u.status = 'active'
+       ORDER BY r.role_name, u.first_name, u.last_name`
+    );
+    res.json(rows.map(u => ({
+      user_id: u.user_id,
+      name: `${u.first_name} ${u.last_name}`.trim(),
+      role: u.role_name,
+    })));
+  } catch (error) {
+    console.error('Get assignable users error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 module.exports = {
   login,
   requestPasswordReset,
@@ -332,4 +353,5 @@ module.exports = {
   signup,
   createInvitation,
   getInvitations,
+  getAssignableUsers,
 };

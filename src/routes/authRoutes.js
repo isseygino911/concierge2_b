@@ -15,5 +15,6 @@ router.post('/register-from-invite', authController.registerFromInvite);
 // Protected routes
 router.post('/invite', authenticate, authorize('super_admin', 'admin', 'sales'), authController.createInvitation);
 router.get('/invitations', authenticate, authorize('super_admin', 'admin', 'sales'), authController.getInvitations);
+router.get('/assignable-users', authenticate, authorize('super_admin', 'admin'), authController.getAssignableUsers);
 
 module.exports = router;
