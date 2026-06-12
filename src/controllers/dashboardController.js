@@ -258,14 +258,7 @@ exports.getOrgStats = async (req, res) => {
     const [ticketCount] = await pool.execute(
       'SELECT COUNT(*) as count FROM tickets WHERE org_id = ?', [orgId]
     );
-    const [spend] = await pool.execute(
-      `SELECT COALESCE(SUM(tc.cost), 0) AS total_spend
-       FROM tickets t
-       JOIN ticket_categories tc ON t.category_id = tc.category_id
-       WHERE t.org_id = ?`,
-      [orgId]
-    );
-    res.json({ ticketCount: ticketCount[0].count, totalSpend: spend[0].total_spend });
+    res.json({ ticketCount: ticketCount[0].count, totalSpend: 0 });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching stats', error: error.message });
   }

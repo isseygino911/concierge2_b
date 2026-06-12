@@ -19,18 +19,10 @@ const createTicket = async (req, res) => {
   try {
     // Fetch student record for this user
     const [studentRows] = await pool.query(
-      'SELECT student_id, org_id, parent_id, balance FROM students WHERE user_id = ?', [userId]
+      'SELECT student_id, org_id, parent_id FROM students WHERE user_id = ?', [userId]
     );
     if (studentRows.length === 0) return res.status(404).json({ error: 'Student record not found' });
-    const { student_id, org_id, parent_id, balance } = studentRows[0];
-
-    // Balance check against category cost
-    const [catRows] = await pool.query('SELECT cost FROM ticket_categories WHERE category_id = ?', [category_id]);
-    const cost = catRows.length > 0 ? parseFloat(catRows[0].cost) : 0;
-    if (balance < cost) {
-      await notificationService.notifyEvent('BALANCE_INSUFFICIENT', { studentId: student_id });
-      return res.status(402).json({ error: 'Insufficient balance to submit this ticket' });
-    }
+    const { student_id, org_id, parent_id } = studentRows[0];
 
     const [result] = await pool.query(
       'INSERT INTO tickets (student_id, org_id, title, description, priority, category_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -280,7 +272,7 @@ const getAdminQueue = async (req, res) => {
 };
 
 const createCategory = async (req, res) => {
-  const { category_name, cost, description } = req.body;
+  const { category_name, description } = req.body;
   const userRole = req.user.role;
 
   if (userRole !== 'super_admin') {
@@ -293,8 +285,8 @@ const createCategory = async (req, res) => {
 
   try {
     const [result] = await pool.query(
-      'INSERT INTO ticket_categories (category_name, cost, description) VALUES (?, ?, ?)',
-      [category_name, cost || 0, description || '']
+      'INSERT INTO ticket_categories (category_name, description) VALUES (?, ?)',
+      [category_name, description || '']
     );
     res.status(201).json({ message: 'Category created successfully', categoryId: result.insertId });
   } catch (error) {
@@ -315,7 +307,7 @@ const getAllCategories = async (req, res) => {
 
 const updateCategory = async (req, res) => {
   const { id } = req.params;
-  const { category_name, cost, description } = req.body;
+  const { category_name, description } = req.body;
   const userRole = req.user.role;
 
   if (userRole !== 'super_admin') {
@@ -324,8 +316,8 @@ const updateCategory = async (req, res) => {
 
   try {
     const [result] = await pool.query(
-      'UPDATE ticket_categories SET category_name = ?, cost = ?, description = ? WHERE category_id = ?',
-      [category_name, cost, description, id]
+      'UPDATE ticket_categories SET category_name = ?, description = ? WHERE category_id = ?',
+      [category_name, description, id]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Category not found' });
